@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { useSession } from '@/context/ctx';
 import { useSessionStore } from '@/stores/sessionStore';
 import { saveSession, updateStreak, type StreakRecord } from '@/lib/sessions';
+import { evaluateUnlocks, type Unlockable } from '@/lib/unlocks';
 import { formatDistance, formatDuration, formatPaceMinPerKm } from '@/lib/format';
 import { colors, spacing } from '@/constants/theme';
 
@@ -24,6 +25,7 @@ export default function SessionSummaryScreen() {
   const [saveState, setSaveState] = useState<SaveState>('saving');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [streak, setStreak] = useState<StreakRecord | null>(null);
+  const [newUnlocks, setNewUnlocks] = useState<Unlockable[]>([]);
   const savedRef = useRef(false);
 
   useEffect(() => {
@@ -56,6 +58,15 @@ export default function SessionSummaryScreen() {
       const updated = await updateStreak(user.id, result.endedAt);
       setStreak(updated);
       setSaveState('saved');
+
+      // Unlocks aren't part of "did the session save" -- a failure here
+      // shouldn't flip the screen into its error/retry state.
+      try {
+        const unlocked = await evaluateUnlocks(user.id);
+        setNewUnlocks(unlocked);
+      } catch (err) {
+        console.warn('Failed to evaluate unlocks:', err);
+      }
     } catch (err) {
       setSaveState('error');
       setSaveError(err instanceof Error ? err.message : 'Failed to save session.');
@@ -74,7 +85,6 @@ export default function SessionSummaryScreen() {
       `OUTRUN — ${ACTIVITY_LABELS[result.activityType]}`,
       `${formatDistance(result.distanceM)} in ${formatDuration(result.durationS)}`,
       `Score ${result.score.toLocaleString()}`,
-      `${result.zombiesOutrun} zombies outrun`,
     ];
     if (result.caughtCount > 0) parts.push(`Caught ${result.caughtCount}x (still alive)`);
     try {
@@ -117,16 +127,21 @@ export default function SessionSummaryScreen() {
           <Text style={styles.statLabel}>Calories</Text>
         </Card>
       </View>
-      <View style={styles.statsRow}>
-        <Card style={styles.statCard}>
-          <Text style={styles.statValue}>{result.score.toLocaleString()}</Text>
-          <Text style={styles.statLabel}>Score</Text>
+      <Card style={styles.scoreCard}>
+        <Text style={styles.scoreValue}>{result.score.toLocaleString()}</Text>
+        <Text style={styles.statLabel}>Score</Text>
+      </Card>
+
+      {newUnlocks.length > 0 && (
+        <Card style={styles.unlockCard}>
+          <Text style={styles.unlockTitle}>NEW UNLOCK</Text>
+          {newUnlocks.map((u) => (
+            <Text key={u.id} style={styles.unlockName}>
+              {u.name}
+            </Text>
+          ))}
         </Card>
-        <Card style={styles.statCard}>
-          <Text style={styles.statValue}>{result.zombiesOutrun}</Text>
-          <Text style={styles.statLabel}>Zombies outrun</Text>
-        </Card>
-      </View>
+      )}
 
       {result.caughtCount > 0 && (
         <Card>
@@ -192,6 +207,14 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
   },
+  scoreCard: {
+    alignItems: 'center',
+  },
+  scoreValue: {
+    color: colors.accent,
+    fontSize: 32,
+    fontWeight: '800',
+  },
   statLabel: {
     color: colors.textSecondary,
     fontSize: 11,
@@ -202,6 +225,22 @@ const styles = StyleSheet.create({
   caughtText: {
     color: colors.textSecondary,
     fontSize: 14,
+  },
+  unlockCard: {
+    borderColor: colors.accent,
+    alignItems: 'center',
+  },
+  unlockTitle: {
+    color: colors.accent,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: spacing.xs,
+  },
+  unlockName: {
+    color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '700',
   },
   saveText: {
     color: colors.textSecondary,

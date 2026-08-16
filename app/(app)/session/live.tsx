@@ -248,7 +248,9 @@ export default function LiveSessionScreen() {
                 {sample ? formatSpeedKmh(sample.speedMps) : '--'}
               </Text>
               <Text style={styles.hudLabel}>
-                {sample ? formatPaceMinPerKm(sample.speedMps) : ACTIVITY_LABELS[activityType]}
+                {sample && sample.elapsedS > 0
+                  ? `Avg ${formatPaceMinPerKm(sample.totalDistanceM / sample.elapsedS)}`
+                  : ACTIVITY_LABELS[activityType]}
               </Text>
             </View>
             <View style={styles.hudCard}>
@@ -326,6 +328,10 @@ export default function LiveSessionScreen() {
                 {sample ? formatDuration(sample.elapsedS) : '00:00'}
               </Text>
               <Text style={styles.hudLabel}>Elapsed</Text>
+            </View>
+            <View style={styles.hudCard}>
+              <Text style={styles.hudValue}>{sample ? Math.round(liveCalories(sample)) : 0}</Text>
+              <Text style={styles.hudLabel}>Calories</Text>
             </View>
             <View style={styles.hudCard}>
               <Text

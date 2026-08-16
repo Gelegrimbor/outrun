@@ -14,6 +14,12 @@ import {
   type SessionRecord,
   type StreakRecord,
 } from '@/lib/sessions';
+import {
+  describeCondition,
+  fetchAllUnlockables,
+  fetchUnlockedIds,
+  type Unlockable,
+} from '@/lib/unlocks';
 import { formatDistance, formatDuration } from '@/lib/format';
 import { colors, radii, spacing } from '@/constants/theme';
 
@@ -42,6 +48,8 @@ export default function DashboardScreen() {
   const [streak, setStreak] = useState<StreakRecord | null>(null);
   const [weeklyM, setWeeklyM] = useState<number | null>(null);
   const [recent, setRecent] = useState<SessionRecord[] | null>(null);
+  const [unlockables, setUnlockables] = useState<Unlockable[] | null>(null);
+  const [unlockedIds, setUnlockedIds] = useState<Set<string>>(new Set());
 
   useFocusEffect(
     useCallback(() => {
@@ -51,12 +59,16 @@ export default function DashboardScreen() {
         fetchStreak(user.id),
         fetchWeeklyDistanceM(user.id),
         fetchRecentSessions(user.id),
+        fetchAllUnlockables(),
+        fetchUnlockedIds(user.id),
       ])
-        .then(([streakRow, weekly, sessions]) => {
+        .then(([streakRow, weekly, sessions, allUnlockables, unlocked]) => {
           if (cancelled) return;
           setStreak(streakRow);
           setWeeklyM(weekly);
           setRecent(sessions);
+          setUnlockables(allUnlockables);
+          setUnlockedIds(unlocked);
         })
         .catch((err) => {
           console.warn('Failed to load dashboard data:', err);
@@ -109,6 +121,11 @@ export default function DashboardScreen() {
       </View>
 
       <Button title="Start Session" onPress={handleStartSession} />
+      <Button
+        title="Leaderboard"
+        variant="secondary"
+        onPress={() => router.push('/leaderboard')}
+      />
 
       <Card style={styles.firstCardAfterButton}>
         <Text style={styles.cardLabel}>Recent sessions</Text>
@@ -135,6 +152,31 @@ export default function DashboardScreen() {
             </View>
           </View>
         ))}
+      </Card>
+
+      <Card>
+        <Text style={styles.cardLabel}>Unlocked</Text>
+        {unlockables === null && <Text style={styles.emptyText}>Loading…</Text>}
+        {unlockables?.map((u) => {
+          const unlocked = unlockedIds.has(u.id);
+          return (
+            <View key={u.id} style={styles.unlockRow}>
+              <View style={[styles.unlockBadge, unlocked && styles.unlockBadgeActive]}>
+                <Text style={[styles.unlockBadgeText, unlocked && styles.unlockBadgeTextActive]}>
+                  {u.name.charAt(0)}
+                </Text>
+              </View>
+              <View style={styles.unlockText}>
+                <Text style={[styles.unlockName, !unlocked && styles.unlockNameLocked]}>
+                  {u.name}
+                </Text>
+                <Text style={styles.unlockMeta}>
+                  {unlocked ? u.type : describeCondition(u.unlock_condition)}
+                </Text>
+              </View>
+            </View>
+          );
+        })}
       </Card>
 
       <Card>
@@ -262,6 +304,47 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontSize: 15,
     fontWeight: '800',
+  },
+  unlockRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.xs,
+  },
+  unlockBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: radii.sm,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.sm,
+  },
+  unlockBadgeActive: {
+    backgroundColor: colors.accent,
+  },
+  unlockBadgeText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  unlockBadgeTextActive: {
+    color: '#151312',
+  },
+  unlockText: {
+    flex: 1,
+  },
+  unlockName: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  unlockNameLocked: {
+    color: colors.textSecondary,
+  },
+  unlockMeta: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 1,
   },
   profileRow: {
     flexDirection: 'row',

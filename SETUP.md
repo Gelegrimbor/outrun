@@ -305,9 +305,76 @@ One manual step, same as Phase 2:
   the data model, so the summary shows score instead. Revisit if/when
   unlockables (Phase 8) need an XP economy.
 - "Zombies outrun" is currently `24 × checkpoints passed` (the whole visible
-  horde per gate) — placeholder math, flagged for Phase 8 when it matters.
+  horde per gate) — placeholder math. It's still saved to the database
+  (`sessions.zombies_outrun`), just no longer shown on the summary screen or
+  in the share text, since displaying it next to real stats implied it was
+  equally meaningful.
 - Streak math runs client-side on save (yesterday → +1, same day → keep,
   older → reset to 1). Good enough for v1; a server-side function would be
   needed if it ever affects leaderboards.
 - Weekly goal on the dashboard is still a fixed 8km — there's no user
   setting for it yet (Profile/Settings screen, Phase 8/9).
+- Live session HUD: "pace" next to the speed reading is now **average**
+  pace since session start (steadier, matches Strava/Samsung Health
+  convention), while the large speed number stays instantaneous (the horde
+  logic still reacts to instantaneous speed). Live calories are now on the
+  HUD too, using the same MET formula as the summary screen, updating
+  every GPS tick.
+
+## Phase 8 — leaderboard + unlockables
+
+Phase 8 gets you: a global leaderboard (real data), a placeholder Friends
+tab (see notes below on why), and character/skin unlocks evaluated after
+each session and shown on the dashboard.
+
+### 1. Create the leaderboard + unlockables tables
+
+One more manual step:
+
+1. Supabase Dashboard → **SQL Editor → New query**.
+2. Paste and run
+   [`supabase/sql/003_leaderboard_and_unlockables.sql`](supabase/sql/003_leaderboard_and_unlockables.sql)
+   (requires `001_profiles.sql` and `002_sessions.sql` to already be run).
+
+This seeds 5 unlockables tied to conditions computable from data you
+already have: first session, 3-day streak, 10km lifetime distance, 1000+
+score in one session, 100+ zombies outrun total.
+
+### 2. Test it
+
+1. Dashboard → **Leaderboard** → **Global** tab should show every user
+   who's completed at least one session, ranked by their best single-session
+   score, with your own row highlighted.
+2. **Friends** tab is intentionally a placeholder — see notes below.
+3. Complete a session that satisfies an unlock condition (the easiest is
+   "Fresh Meat" — any completed session unlocks it) → the summary screen
+   should show a **NEW UNLOCK** card.
+4. Dashboard → **Unlocked** card should show it highlighted; other
+   not-yet-earned ones show dimmed with a hint of what unlocks them.
+5. In Supabase → **Table Editor → user_unlockables**, you should see a row
+   per unlock.
+
+### Notes / decisions (Phase 8)
+
+- **No friends system.** The spec's screen list calls for a friends/global
+  toggle, but the data model in the spec has no table for friend
+  relationships at all — there's no way to define "friends" yet. The
+  Friends tab exists (toggle is there, matching the screen spec) but says
+  so honestly rather than faking data. Would need a `friendships`/`follows`
+  table (not in spec) before this can be real.
+- **Leaderboard security model**, worth understanding if you touch the SQL:
+  the `sessions` table's RLS only lets each user see their own rows, which
+  is correct for session history but can't produce a leaderboard. The
+  `leaderboard` view deliberately runs with the view owner's privileges
+  (not `security_invoker`) so it can aggregate across everyone — but it
+  only exposes display name + best score + session count, nothing
+  sensitive, and only to `authenticated` users.
+- **Unlocks are evaluated and written client-side**, same trust model as
+  the rest of the game's stats in this build (score, distance, etc. are
+  all client-computed with no server-side validation). A determined user
+  could fake an unlock the same way they could already fake a session's
+  distance. Not addressed here — consistent with everything else, and low
+  stakes for a v1 single-player fitness app.
+- Character/skin unlocks are still just names + type ("character"/"skin")
+  with a colored initial badge — no actual art, consistent with every other
+  placeholder-first phase in this build.
