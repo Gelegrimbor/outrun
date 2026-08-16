@@ -17,6 +17,10 @@ export interface PaceSample {
 export interface PaceProvider {
   start(): Promise<void>;
   stop(): void;
+  /** Suspend tracking: no samples, no distance/time accrual until resume. */
+  pause(): void;
+  /** Resume after pause(). Movement during the pause does not count. */
+  resume(): Promise<void>;
   /** Instantaneous read of the latest smoothed speed, meters/second. */
   getCurrentSpeed(): number;
   /** Returns an unsubscribe function. */

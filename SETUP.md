@@ -181,3 +181,133 @@ own indoor wifi-only location, and won't run at all in a web browser.
 - Speed is smoothed over a rolling 3-second window of GPS fixes (distance
   covered / time elapsed), not the raw `coords.speed` field some Android GPS
   chipsets report unreliably.
+
+## Phase 5 — 3D chase scene
+
+Phase 5 gets you: the live session screen is now the game — a night-highway
+3D scene (react-three-fiber + expo-gl + three.js) with a receding road, a
+placeholder player, a zombie horde whose distance is driven by your real GPS
+pace, and checkpoint gates spaced from your session goal. No setup steps
+needed.
+
+### What you're looking at
+
+- The camera faces your character (they run toward it), so the road recedes
+  to the horizon behind them and **the horde is always visible** on it at its
+  actual distance — per the spec, horde visibility beats everything else.
+- Everything is deliberately placeholder geometry: amber box/sphere = you,
+  cone silhouettes = the horde, amber arch = checkpoint gate. Real low-poly
+  models are a later polish pass.
+- Horde silhouettes shift from murky green to red as they close in.
+
+### How the chase works (tuning summary)
+
+- First **20 seconds are a warmup** — the horde holds off while GPS settles
+  and you get moving.
+- The horde sits ~25m back when you hold a purposeful pace (walk ≈4.5 km/h,
+  run ≈8.5 km/h, cycle ≈15 km/h). Your target pace **self-calibrates toward
+  your own sustained speed** over ~45s, clamped so it never gets trivial or
+  impossible.
+- Drop below target pace and the horde starts gaining — slowly (~20s of
+  visible warning), so GPS jitter doesn't cause false scares. Speed up and
+  it falls back noticeably faster, so effort feels immediately rewarded.
+- If it fully reaches you (≤3m): **CAUGHT** — a 5-second setback where the
+  horde resets to comfort distance, then the chase resumes. Caught count
+  shows in the HUD. Never a game over — this is cardio, not punishment.
+
+### Test it (outdoors, real device)
+
+1. Start a session as usual → **Begin Session** → grant location.
+2. During warmup, start walking. After 20s the horde appears at max distance.
+3. Hold a steady purposeful pace ~1 min → horde should settle around ~25m.
+4. Deliberately slow to a dawdle → within ~10-20s the horde should visibly
+   gain and the Horde HUD number fall.
+5. Speed back up → it should retreat, clearly faster than it advanced.
+6. Stop completely (simulate being caught) → CAUGHT banner within ~30-40s,
+   horde backs off, chase resumes.
+7. Watch for a checkpoint gate sliding in past your character; the
+   Checkpoints HUD counter should tick up as you pass each one.
+8. **Feel check (the important one):** does the framerate hold up on your
+   device, and does the pace→horde relationship feel fair? Note anything
+   that feels off (too twitchy, too forgiving, too slow to react) — all the
+   tuning constants live in `lib/game/hordeLogic.ts` with comments, so
+   they're one-line changes.
+
+### Notes / decisions (Phase 5)
+
+- **No react-native-game-engine**, even though the spec's stack table lists
+  it — react-three-fiber's own frame loop (`useFrame`) already provides the
+  update loop, and the horde/checkpoint logic lives in plain TS classes
+  (`lib/game/`) that don't care who calls them. Adding RNGE would be a second
+  loop with no job. Flagged here in case you want it revisited.
+- Performance choices: unlit materials only (silhouette look, no lighting
+  pass), the whole horde is one instanced draw call, zero allocations inside
+  the frame loop. If a device still stutters, the first knobs are zombie
+  count and dash count in `components/scene/ChaseScene.tsx`.
+- iOS **simulators** are known to crash on expo-gl content — physical device
+  only (Android device testing is unaffected).
+
+## Phase 6 — HUD overlay
+
+Phase 6 gets you the spec's full game HUD on the live screen, wired to real
+session state. No setup steps needed.
+
+- **Speed/pace** (top-left) and **score** (top-right).
+- **Checkpoint progress bar** with distance-to-next (top).
+- **Hearts** (3 max): lose one each time the horde catches you, regain one
+  per checkpoint passed. Hearts hitting zero doesn't end anything — cardio,
+  not punishment.
+- **Score**: ~1 point per meter, multiplied by your effort ratio (0.5×–2×
+  of target pace); +250 per checkpoint; −100 when caught.
+- **Pause/Resume**: pausing freezes the horde, the scene, AND tracking —
+  distance and time during a pause don't count (Strava-style). Movement
+  while paused is discarded.
+- **FINISH LINE banner** when you hit your session goal — the session keeps
+  going until you end it.
+- **Dev-only FPS counter** (bottom-right, above the stats): green ≥55,
+  amber ≥45, red below. This is measured inside the render loop itself, so
+  it distinguishes "the tuning is too gentle" (steady 55-60 but the horde
+  feels slow) from "the app is dropping frames" (low/unstable number). If
+  it's a performance problem, the first knobs are `ZOMBIE_COUNT` and
+  `DASH_COUNT` in `components/scene/ChaseScene.tsx`.
+
+## Phase 7 — session persistence + summary
+
+Phase 7 gets you: sessions saved to Supabase with checkpoint detail, a
+summary screen with share, streak tracking, and the dashboard showing real
+data (streak, weekly distance, recent sessions).
+
+### 1. Create the sessions/checkpoints/streaks tables
+
+One manual step, same as Phase 2:
+
+1. Supabase Dashboard → **SQL Editor → New query**.
+2. Paste and run [`supabase/sql/002_sessions.sql`](supabase/sql/002_sessions.sql)
+   (requires `001_profiles.sql` from Phase 2 to have been run first).
+
+### 2. Test it
+
+1. Complete a short session (even a 2-minute walk) → **End Session** → the
+   summary screen should show distance/duration/avg pace/calories/score/
+   zombies outrun, and "Saving session…" then "Saved. Streak: 1 day".
+2. **Share** should open the system share sheet with a one-line summary.
+3. **Done** returns to the dashboard, which should now show your real
+   streak, this week's distance, and the session in Recent sessions.
+4. In Supabase → **Table Editor**: one row in `sessions`, one row per
+   checkpoint you passed in `checkpoints`, and your `streaks` row.
+5. Do a second session the same day → streak stays; tomorrow → streak +1.
+6. Calories use your profile weight (MET-based estimate). If you skipped
+   onboarding weight, it falls back to 70kg.
+
+### Notes / decisions (Phases 6-7)
+
+- The spec's summary screen mentions "XP gained" — there's no XP system in
+  the data model, so the summary shows score instead. Revisit if/when
+  unlockables (Phase 8) need an XP economy.
+- "Zombies outrun" is currently `24 × checkpoints passed` (the whole visible
+  horde per gate) — placeholder math, flagged for Phase 8 when it matters.
+- Streak math runs client-side on save (yesterday → +1, same day → keep,
+  older → reset to 1). Good enough for v1; a server-side function would be
+  needed if it ever affects leaderboards.
+- Weekly goal on the dashboard is still a fixed 8km — there's no user
+  setting for it yet (Profile/Settings screen, Phase 8/9).

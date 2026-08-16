@@ -30,6 +30,7 @@ export class GpsPaceProvider implements PaceProvider {
   private fixes: Fix[] = [];
   private totalDistanceM = 0;
   private startedAt: number | null = null;
+  private pausedAt: number | null = null;
   private latestAccuracyM: number | null = null;
   private latestSpeedMps = 0;
 
@@ -43,7 +44,12 @@ export class GpsPaceProvider implements PaceProvider {
     this.totalDistanceM = 0;
     this.latestSpeedMps = 0;
     this.startedAt = Date.now();
+    this.pausedAt = null;
 
+    await this.watch();
+  }
+
+  private async watch(): Promise<void> {
     this.subscription = await Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.BestForNavigation,
@@ -52,6 +58,27 @@ export class GpsPaceProvider implements PaceProvider {
       },
       (location) => this.handleLocation(location)
     );
+  }
+
+  pause(): void {
+    if (this.pausedAt !== null) return;
+    this.subscription?.remove();
+    this.subscription = null;
+    this.pausedAt = Date.now();
+    this.latestSpeedMps = 0;
+  }
+
+  async resume(): Promise<void> {
+    if (this.pausedAt === null) return;
+    // Shift the start time forward so paused time doesn't count as elapsed.
+    if (this.startedAt !== null) {
+      this.startedAt += Date.now() - this.pausedAt;
+    }
+    this.pausedAt = null;
+    // Drop the pre-pause fix window: the first new fix then has no
+    // predecessor, so distance walked during the pause never counts.
+    this.fixes = [];
+    await this.watch();
   }
 
   stop(): void {

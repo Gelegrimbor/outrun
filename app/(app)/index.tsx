@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { router } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 import { Screen } from '@/components/ui/Screen';
 import { Card } from '@/components/ui/Card';
@@ -7,13 +7,25 @@ import { Button } from '@/components/ui/Button';
 import { useSession } from '@/context/ctx';
 import { useProfile } from '@/context/profile';
 import { useSessionStore } from '@/stores/sessionStore';
+import {
+  fetchRecentSessions,
+  fetchStreak,
+  fetchWeeklyDistanceM,
+  type SessionRecord,
+  type StreakRecord,
+} from '@/lib/sessions';
+import { formatDistance, formatDuration } from '@/lib/format';
 import { colors, radii, spacing } from '@/constants/theme';
 
-// Placeholder numbers -- real streak/goal tracking arrives once sessions
-// persist to Supabase (Phase 7).
-const PLACEHOLDER_STREAK_DAYS = 3;
-const PLACEHOLDER_WEEKLY_GOAL_KM = 8;
-const PLACEHOLDER_WEEKLY_PROGRESS_KM = 3.2;
+// Weekly target is not yet a user setting (no column for it) — fixed 8km
+// until a goals/settings screen exists.
+const WEEKLY_GOAL_KM = 8;
+
+const ACTIVITY_LABELS: Record<string, string> = {
+  walk: 'Walk',
+  run: 'Run',
+  cycle: 'Cycle',
+};
 
 const GENDER_LABELS: Record<string, string> = {
   male: 'Male',
@@ -27,6 +39,33 @@ export default function DashboardScreen() {
   const { profile } = useProfile();
   const resetSessionSetup = useSessionStore((state) => state.reset);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [streak, setStreak] = useState<StreakRecord | null>(null);
+  const [weeklyM, setWeeklyM] = useState<number | null>(null);
+  const [recent, setRecent] = useState<SessionRecord[] | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) return;
+      let cancelled = false;
+      Promise.all([
+        fetchStreak(user.id),
+        fetchWeeklyDistanceM(user.id),
+        fetchRecentSessions(user.id),
+      ])
+        .then(([streakRow, weekly, sessions]) => {
+          if (cancelled) return;
+          setStreak(streakRow);
+          setWeeklyM(weekly);
+          setRecent(sessions);
+        })
+        .catch((err) => {
+          console.warn('Failed to load dashboard data:', err);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [user])
+  );
 
   const handleSignOut = async () => {
     setIsSigningOut(true);
@@ -36,14 +75,13 @@ export default function DashboardScreen() {
 
   const handleStartSession = () => {
     // Clear any leftover choices from a previous run before entering the
-    // flow fresh -- Done exits via dismissTo rather than resetting itself,
-    // to avoid the flow's own screens reacting to the store going empty
-    // out from under them mid-transition.
+    // flow fresh.
     resetSessionSetup();
     router.push('/session/activity');
   };
 
-  const progressRatio = Math.min(PLACEHOLDER_WEEKLY_PROGRESS_KM / PLACEHOLDER_WEEKLY_GOAL_KM, 1);
+  const weeklyKm = (weeklyM ?? 0) / 1000;
+  const progressRatio = Math.min(weeklyKm / WEEKLY_GOAL_KM, 1);
 
   return (
     <Screen>
@@ -54,13 +92,13 @@ export default function DashboardScreen() {
 
       <View style={styles.statsRow}>
         <Card style={styles.statCard}>
-          <Text style={styles.statValue}>{PLACEHOLDER_STREAK_DAYS}</Text>
+          <Text style={styles.statValue}>{streak?.current_streak ?? 0}</Text>
           <Text style={styles.statLabel}>Day streak</Text>
         </Card>
         <Card style={styles.statCard}>
           <Text style={styles.statValue}>
-            {PLACEHOLDER_WEEKLY_PROGRESS_KM}
-            <Text style={styles.statValueUnit}> / {PLACEHOLDER_WEEKLY_GOAL_KM} km</Text>
+            {weeklyKm.toFixed(1)}
+            <Text style={styles.statValueUnit}> / {WEEKLY_GOAL_KM} km</Text>
           </Text>
           <Text style={styles.statLabel}>This week</Text>
         </Card>
@@ -74,9 +112,29 @@ export default function DashboardScreen() {
 
       <Card style={styles.firstCardAfterButton}>
         <Text style={styles.cardLabel}>Recent sessions</Text>
-        <Text style={styles.emptyText}>
-          No sessions yet — your first walk, run, or ride will show up here.
-        </Text>
+        {recent === null && <Text style={styles.emptyText}>Loading…</Text>}
+        {recent !== null && recent.length === 0 && (
+          <Text style={styles.emptyText}>
+            No sessions yet — your first walk, run, or ride will show up here.
+          </Text>
+        )}
+        {recent?.map((session) => (
+          <View key={session.id} style={styles.sessionRow}>
+            <View style={styles.sessionMain}>
+              <Text style={styles.sessionActivity}>
+                {ACTIVITY_LABELS[session.activity_type] ?? session.activity_type}
+              </Text>
+              <Text style={styles.sessionMeta}>
+                {new Date(session.started_at).toLocaleDateString()} ·{' '}
+                {formatDuration(session.duration_s)}
+              </Text>
+            </View>
+            <View style={styles.sessionStats}>
+              <Text style={styles.sessionDistance}>{formatDistance(session.distance_m)}</Text>
+              <Text style={styles.sessionMeta}>{session.score.toLocaleString()} pts</Text>
+            </View>
+          </View>
+        ))}
       </Card>
 
       <Card>
@@ -175,6 +233,35 @@ const styles = StyleSheet.create({
   emptyText: {
     color: colors.textSecondary,
     fontSize: 14,
+  },
+  sessionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  sessionMain: {
+    flex: 1,
+  },
+  sessionActivity: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  sessionMeta: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 1,
+  },
+  sessionStats: {
+    alignItems: 'flex-end',
+  },
+  sessionDistance: {
+    color: colors.accent,
+    fontSize: 15,
+    fontWeight: '800',
   },
   profileRow: {
     flexDirection: 'row',

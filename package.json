@@ -3,11 +3,14 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "dependencies": {
+    "@react-three/fiber": "^9.7.0",
     "@supabase/supabase-js": "^2.112.3",
     "expo": "~57.0.13",
+    "expo-asset": "~57.0.11",
     "expo-auth-session": "~57.0.7",
     "expo-constants": "~57.0.11",
     "expo-dev-client": "~57.0.12",
+    "expo-gl": "~57.0.2",
     "expo-linking": "~57.0.6",
     "expo-location": "~57.0.10",
     "expo-router": "~57.0.13",
@@ -22,10 +25,12 @@
     "react-native-screens": "~4.26.0",
     "react-native-url-polyfill": "^4.0.0",
     "react-native-web": "^0.21.2",
+    "three": "^0.185.1",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "@types/three": "^0.185.4",
     "typescript": "~6.0.3"
   },
   "scripts": {
