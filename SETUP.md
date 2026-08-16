@@ -1,4 +1,6 @@
-# OUTRUN — Phase 1 setup
+# OUTRUN — Setup
+
+## Phase 1 — auth
 
 Phase 1 gets you: an Expo Router navigation shell, and email/password + Google
 sign-in working end to end through Supabase, with a "Remember me" toggle
@@ -78,8 +80,49 @@ Test:
 - "Continue with Google" → picks a Google account in the in-app browser → redirects back and lands on the dashboard.
 - "Sign Out" from the dashboard returns you to sign-in.
 
-## Notes / what's intentionally deferred
+## Notes / what's intentionally deferred (Phase 1)
 
-- The dashboard screen is a placeholder — the real profile/streak/session data comes in Phase 2+.
-- No `profiles` row is created on sign-up yet; that table and the onboarding flow are Phase 2.
 - Native (non-browser) Google Sign-In (`@react-native-google-signin/google-signin`) would give a more native-feeling account picker, but requires a custom dev client / EAS build and per-platform SHA-1/client ID setup. The web-based flow above works in plain Expo Go, which is why Phase 1 uses it — worth revisiting once we're building dev/standalone clients anyway.
+
+## Phase 2 — profile & onboarding
+
+Phase 2 gets you: a `profiles` table, an onboarding form that runs once per
+new user (weight, height, age, gender, display name), and a dashboard shell
+that reads that data back plus shows placeholder streak/goal/session stats.
+
+### 1. Create the `profiles` table
+
+I don't have direct access to your Supabase database, so this one step is
+manual:
+
+1. Supabase Dashboard → your project → **SQL Editor → New query**.
+2. Paste the contents of [`supabase/sql/001_profiles.sql`](supabase/sql/001_profiles.sql) and run it.
+   It creates the `profiles` table plus row-level security policies scoping
+   every row to `auth.uid() = id`.
+
+No other setup needed — the app already points at this table.
+
+### 2. Test it
+
+```bash
+npm start
+```
+
+- Sign up (or sign in with an account that has no profile yet) → you should
+  land on **Set up your profile**, not the dashboard.
+- Fill in display name, weight, height, age, and pick a gender option, then
+  **Save & Continue** → you should land on the dashboard automatically, with
+  your display name in the greeting and your stats in the "Your profile" card.
+- Sign out and sign back in with that same account → you should skip
+  onboarding entirely and go straight to the dashboard.
+- Streak, weekly goal, and recent sessions on the dashboard are hardcoded
+  placeholders — that's expected, real tracking arrives once sessions persist
+  (later phases). "Start Session" just shows an alert for now.
+- In the Supabase Dashboard → **Table Editor → profiles**, you should see one
+  row per onboarded user with the values you entered.
+
+### Notes / what's intentionally deferred (Phase 2)
+
+- No editing UI for the profile yet — that's the Profile/Settings screen (Phase 8/9).
+- The build spec's onboarding screen mentions a "fitness goal selector," but the `profiles` table in the data model has no column for it, so it's left out here rather than collecting data nothing stores yet. Worth revisiting if/when a `fitness_goal` column gets added.
+- Weight/height are metric only (kg/cm), matching the column names in the spec's data model — no unit toggle yet.
