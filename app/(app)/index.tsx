@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { router } from 'expo-router';
+import { StyleSheet, Text, View } from 'react-native';
 import { Screen } from '@/components/ui/Screen';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useSession } from '@/context/ctx';
 import { useProfile } from '@/context/profile';
+import { useSessionStore } from '@/stores/sessionStore';
 import { colors, radii, spacing } from '@/constants/theme';
 
 // Placeholder numbers -- real streak/goal tracking arrives once sessions
@@ -23,6 +25,7 @@ const GENDER_LABELS: Record<string, string> = {
 export default function DashboardScreen() {
   const { user, signOut } = useSession();
   const { profile } = useProfile();
+  const resetSessionSetup = useSessionStore((state) => state.reset);
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   const handleSignOut = async () => {
@@ -32,7 +35,12 @@ export default function DashboardScreen() {
   };
 
   const handleStartSession = () => {
-    Alert.alert('Coming soon', 'Session setup and the chase itself arrive in a later phase.');
+    // Clear any leftover choices from a previous run before entering the
+    // flow fresh -- Done exits via dismissTo rather than resetting itself,
+    // to avoid the flow's own screens reacting to the store going empty
+    // out from under them mid-transition.
+    resetSessionSetup();
+    router.push('/session/activity');
   };
 
   const progressRatio = Math.min(PLACEHOLDER_WEEKLY_PROGRESS_KM / PLACEHOLDER_WEEKLY_GOAL_KM, 1);
