@@ -32,19 +32,17 @@ export default function SessionStartScreen() {
   const goalMeta = GOAL_TYPE_META[goalType];
   const displayValue = fromCanonicalValue(goalType, goalValue);
 
-  const handleDone = () => {
-    // Dismisses activity + goal in one action and lands on the existing
-    // dashboard entry, rather than replace() which would leave a second
-    // dashboard entry stacked on top of them.
-    router.dismissTo('/(app)');
+  const handleBegin = () => {
+    router.push('/session/live');
   };
 
   return (
     <Screen>
       <Text style={styles.title}>You're set</Text>
       <Text style={styles.subtitle}>
-        Live GPS tracking and the chase itself arrive in a later phase — this
-        just confirms the setup flow works end to end.
+        The 3D scene and the chase itself arrive in a later phase — this
+        starts live GPS pace tracking so we can verify it against a real walk
+        or run.
       </Text>
 
       <Card>
@@ -61,7 +59,7 @@ export default function SessionStartScreen() {
         </View>
       </Card>
 
-      <Button title="Done" onPress={handleDone} />
+      <Button title="Begin Session" onPress={handleBegin} />
       <Button title="Back" variant="secondary" onPress={() => router.back()} />
     </Screen>
   );

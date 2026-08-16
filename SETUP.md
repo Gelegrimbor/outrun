@@ -117,7 +117,7 @@ npm start
   onboarding entirely and go straight to the dashboard.
 - Streak, weekly goal, and recent sessions on the dashboard are hardcoded
   placeholders — that's expected, real tracking arrives once sessions persist
-  (later phases). "Start Session" just shows an alert for now.
+  (later phases).
 - In the Supabase Dashboard → **Table Editor → profiles**, you should see one
   row per onboarded user with the values you entered.
 
@@ -126,3 +126,58 @@ npm start
 - No editing UI for the profile yet — that's the Profile/Settings screen (Phase 8/9).
 - The build spec's onboarding screen mentions a "fitness goal selector," but the `profiles` table in the data model has no column for it, so it's left out here rather than collecting data nothing stores yet. Worth revisiting if/when a `fitness_goal` column gets added.
 - Weight/height are metric only (kg/cm), matching the column names in the spec's data model — no unit toggle yet.
+
+## Phase 3 — session setup flow
+
+Phase 3 gets you: activity picker → goal setup → session start, purely state
+and navigation (Zustand) — no GPS, no 3D, nothing persisted to Supabase yet.
+No setup steps needed.
+
+### Test it
+
+- Dashboard → **Start Session** → pick Walk/Run/Cycle → pick a goal type
+  (Distance/Time/Calories) and a value (quick-pick chip or custom) →
+  **Continue** → summary screen shows what you picked.
+- **Back** at each step should return to the previous step with your choice
+  preserved (until you leave the flow or finish it).
+
+## Phase 4 — GPS pace tracking
+
+Phase 4 gets you: a `PaceProvider` abstraction (see `lib/pace/`) with a v1
+GPS implementation, wired into a live speed/pace/distance readout screen
+after "Begin Session." No setup steps needed — no new Supabase table, no
+dashboard config.
+
+### Test it
+
+This one needs a real device outdoors (or at least near a window) — GPS
+doesn't work in the iOS/Android simulators or Expo Go on your dev machine's
+own indoor wifi-only location, and won't run at all in a web browser.
+
+1. Dashboard → **Start Session** → pick an activity → pick a goal →
+   **Begin Session**.
+2. Grant location access when prompted (first time only).
+3. Walk or run a **known distance** (e.g. a measured block, a track loop,
+   anything you can compare against). Watch the Speed/Pace/Distance/Elapsed
+   numbers update live.
+4. Compare the app's distance reading against your known distance. Some
+   drift is normal (consumer GPS is typically ±5-10m), but it should be in
+   the right ballpark, not wildly off.
+5. **GPS accuracy** on the card shows the device's own reported horizontal
+   accuracy (±meters) — if readings look off, check whether this number is
+   high (poor fix, e.g. indoors or under heavy tree cover).
+6. **End Session** returns to the dashboard.
+
+### Notes / what's intentionally deferred (Phase 4)
+
+- Foreground tracking only — the app must stay open and on-screen. A
+  foreground service for screen-off tracking is Play Store prep work
+  (Phase 9 in the build spec), not needed to verify GPS accuracy now.
+- No accelerometer-based cadence smoothing yet, even though it's listed in
+  the spec's tech stack — the spec's actual "v1 implementation" description
+  only calls for GPS position smoothing, so that's all this phase built.
+  Worth revisiting if GPS-only proves noisy at very low speeds (e.g. brisk
+  walk pace) during real-world testing.
+- Speed is smoothed over a rolling 3-second window of GPS fixes (distance
+  covered / time elapsed), not the raw `coords.speed` field some Android GPS
+  chipsets report unreliably.
