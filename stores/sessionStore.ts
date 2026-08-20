@@ -2,6 +2,9 @@ import { create } from 'zustand';
 
 export type ActivityType = 'walk' | 'run' | 'cycle';
 export type GoalType = 'distance' | 'time' | 'calories';
+/** 'gps' = outdoor (default). 'step' = indoor/treadmill, accelerometer-
+ * estimated. Only offered for walk/run -- see the activity picker. */
+export type PaceSource = 'gps' | 'step';
 
 /** Everything the summary screen needs to display and persist a finished
  * session. Built by the live screen at End Session. */
@@ -30,9 +33,11 @@ interface SessionSetupState {
   // Canonical units regardless of goal type: meters for distance, seconds
   // for time, kcal for calories. Screens convert to/from display units.
   goalValue: number | null;
+  paceSource: PaceSource;
   result: SessionResult | null;
   setActivityType: (activityType: ActivityType) => void;
   setGoal: (goalType: GoalType, goalValue: number) => void;
+  setPaceSource: (paceSource: PaceSource) => void;
   setResult: (result: SessionResult) => void;
   reset: () => void;
 }
@@ -41,9 +46,12 @@ export const useSessionStore = create<SessionSetupState>((set) => ({
   activityType: null,
   goalType: null,
   goalValue: null,
+  paceSource: 'gps',
   result: null,
   setActivityType: (activityType) => set({ activityType }),
   setGoal: (goalType, goalValue) => set({ goalType, goalValue }),
+  setPaceSource: (paceSource) => set({ paceSource }),
   setResult: (result) => set({ result }),
-  reset: () => set({ activityType: null, goalType: null, goalValue: null, result: null }),
+  reset: () =>
+    set({ activityType: null, goalType: null, goalValue: null, paceSource: 'gps', result: null }),
 }));

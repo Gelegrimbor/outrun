@@ -14,7 +14,8 @@ import { ScoreKeeper, MAX_HEARTS, type ScoreState } from '@/lib/game/scoring';
 import { estimateCalories } from '@/lib/game/calories';
 import { formatDistance, formatDuration, formatPaceMinPerKm, formatSpeedKmh } from '@/lib/format';
 import { GpsPaceProvider } from '@/lib/pace/GpsPaceProvider';
-import type { PaceSample } from '@/lib/pace/PaceProvider';
+import { StepPaceProvider } from '@/lib/pace/StepPaceProvider';
+import type { PaceProvider, PaceSample } from '@/lib/pace/PaceProvider';
 import { colors, radii, spacing } from '@/constants/theme';
 
 const ACTIVITY_LABELS: Record<string, string> = {
@@ -26,10 +27,17 @@ const ACTIVITY_LABELS: Record<string, string> = {
 type Status = 'requesting' | 'denied' | 'tracking' | 'error';
 
 export default function LiveSessionScreen() {
-  const { activityType, goalType, goalValue, setResult } = useSessionStore();
+  const { activityType, goalType, goalValue, paceSource, setResult } = useSessionStore();
   const { profile } = useProfile();
 
-  const providerRef = useRef(new GpsPaceProvider());
+  // Picked once at mount from the setup flow's choice -- both implement the
+  // same PaceProvider interface, so nothing downstream (scoring, checkpoints,
+  // the horde sim) needs to know which one is live.
+  const providerRef = useRef<PaceProvider>(
+    paceSource === 'step'
+      ? new StepPaceProvider(profile?.height_cm ?? null, profile?.gender ?? null)
+      : new GpsPaceProvider()
+  );
   const scoreKeeperRef = useRef(new ScoreKeeper());
   const speedRef = useRef(0);
   const distanceRef = useRef(0);
@@ -83,7 +91,11 @@ export default function LiveSessionScreen() {
       setStatus('tracking');
     } catch (err) {
       setStatus(err instanceof Error && err.message.includes('permission') ? 'denied' : 'error');
-      setErrorMessage(err instanceof Error ? err.message : 'Failed to start location tracking.');
+      setErrorMessage(
+        err instanceof Error
+          ? err.message
+          : `Failed to start ${paceSource === 'step' ? 'the step counter' : 'location tracking'}.`
+      );
     }
   };
 
@@ -193,7 +205,9 @@ export default function LiveSessionScreen() {
       <Screen>
         {status === 'requesting' && (
           <Card>
-            <Text style={styles.statusText}>Requesting location access…</Text>
+            <Text style={styles.statusText}>
+              {paceSource === 'step' ? 'Starting the step counter…' : 'Requesting location access…'}
+            </Text>
           </Card>
         )}
         {status === 'denied' && (
@@ -241,6 +255,15 @@ export default function LiveSessionScreen() {
 
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">
         <View pointerEvents="none">
+          {/* Which pace source is live -- accuracy expectations differ. */}
+          <View style={styles.sourceBadgeRow}>
+            <View style={[styles.sourceBadge, paceSource === 'step' && styles.sourceBadgeStep]}>
+              <Text style={styles.sourceBadgeText}>
+                {paceSource === 'step' ? 'INDOOR · ESTIMATED PACE' : 'GPS'}
+              </Text>
+            </View>
+          </View>
+
           {/* Speed (top-left) and score (top-right), per the spec's HUD. */}
           <View style={styles.hudTopRow}>
             <View style={styles.hudCard}>
@@ -397,6 +420,27 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 14,
     marginBottom: spacing.sm,
+  },
+  sourceBadgeRow: {
+    alignItems: 'center',
+    paddingTop: spacing.xs,
+  },
+  sourceBadge: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.lg,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+  },
+  sourceBadgeStep: {
+    borderColor: colors.accent,
+  },
+  sourceBadgeText: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   hudTopRow: {
     flexDirection: 'row',

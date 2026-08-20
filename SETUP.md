@@ -378,3 +378,120 @@ score in one session, 100+ zombies outrun total.
 - Character/skin unlocks are still just names + type ("character"/"skin")
   with a colored initial badge — no actual art, consistent with every other
   placeholder-first phase in this build.
+
+## Standalone preview build (EAS)
+
+For testing real performance (3D scene, GPS, framerate) without the Metro/
+dev-client connection in the loop. This produces an installable APK with a
+shareable link — not a Play Store submission.
+
+`app.json` now uses a real package identifier (`com.joshuascott.outrun`, both
+iOS and Android) instead of the placeholder `com.outrun.app` from early
+phases, and [eas.json](eas.json) has a `preview` profile: `distribution:
+"internal"` (install link, no store review) and `android.buildType: "apk"`
+(installs directly — `.aab` is App Bundle format, store-submission only).
+
+### 1. Log in to EAS
+
+I can't do this step — it's your Expo account:
+
+```bash
+npx eas-cli login
+```
+
+### 2. First build (also links the project)
+
+```bash
+npx eas-cli build --platform android --profile preview
+```
+
+The first run will prompt to create/link an EAS project for OUTRUN if one
+doesn't exist yet (writes `extra.eas.projectId` into `app.json` — commit
+that once it's added). The build runs on Expo's servers; when it finishes
+you'll get a page with a QR code and download link — open it on the Android
+device and install directly (you'll need to allow "install from unknown
+sources" the first time, since this isn't from the Play Store).
+
+### 3. What to check
+
+- The FPS counter should **not** appear anywhere — it's gated on `__DEV__`,
+  which is `false` in this build (confirmed: the dev-only frame-counter
+  component doesn't even mount when the prop feeding it is `undefined`, so
+  there's no measurement overhead either, not just a hidden readout).
+- The app should launch straight into OUTRUN — no dev-client "enter a URL"
+  screen, even though `expo-dev-client` is still an installed dependency
+  (it only activates when a build profile sets `developmentClient: true`,
+  which `preview` doesn't).
+- This is the number that actually answers the Phase 5 "is it tuning or
+  performance" question — Metro/dev-client overhead is completely out of
+  the picture here.
+
+### Notes
+
+- `expo-location`, `expo-gl`, etc. all compile as real native modules in
+  this build (unlike Expo Go) — GPS and the 3D scene should both work
+  exactly as they will in a Play Store build later.
+- Re-run the same `eas build` command any time you want a fresh preview
+  build after changes; each run gets its own install link.
+
+## Phase 10 (piece 1) — step counter / indoor pace mode
+
+Adds `expo-sensors` (a new native module), so **this needs a fresh EAS
+preview build** — it will not work in Expo Go or in a dev-client build made
+before this change. No new Supabase step, no new permission prompts.
+
+### What this is
+
+[`lib/pace/StepPaceProvider.ts`](lib/pace/StepPaceProvider.ts) implements
+the same `PaceProvider` interface as `GpsPaceProvider` — that's the point of
+the interface from Phase 4: the live screen doesn't know or care which one
+is feeding it. It estimates pace by peak-detecting steps from the raw
+accelerometer (not `expo-sensors`' `Pedometer` API — see the file's header
+comment for why: orientation-agnostic, and it avoids the iOS Motion & Fitness
+permission prompt entirely, since raw accelerometer needs none) and
+converting step cadence into speed via a standard stride-length-from-height
+formula, using your profile height (and gender, for a small factor
+adjustment) with a 170cm fallback if unset.
+
+### Test it
+
+1. Dashboard → **Start Session** → pick **Walk** or **Run** (Cycle doesn't
+   offer this — see notes) → a **Pace source** toggle appears:
+   **Outdoor (GPS)** or **Indoor (steps)**.
+2. Pick **Indoor (steps)** → a hint appears confirming it's estimated, not
+   measured → **Continue** through goal setup as normal.
+3. **Begin Session** → should start almost immediately (no permission
+   prompt — there isn't one for this).
+4. On the live screen, an **INDOOR · ESTIMATED PACE** badge should be
+   visible near the top, distinct from the plain **GPS** badge you'd see on
+   an outdoor session.
+5. Prop the phone somewhere it can sense your stride — a treadmill console
+   tray is the reference case, but walking with it in a pocket/armband also
+   works since detection isn't tied to a fixed axis. Walk/jog in place or on
+   a treadmill; Speed/Pace/Distance should respond to your actual cadence
+   within a couple of seconds.
+6. Stand still — the speed reading should decay to 0 rather than sticking at
+   its last value.
+7. Compare against the treadmill's own readout if you have one — this is an
+   estimate, expect real disagreement (rough target: within 15-20% at a
+   steady pace), not GPS-level accuracy.
+
+### Notes / decisions
+
+- **Not offered for Cycle.** There's no equivalent "step" signal for
+  pedaling, and building that isn't part of this pass — that's the
+  Bluetooth sensor piece coming next in this phase, which reads real
+  trainer/bike data instead of estimating from phone motion.
+- **Running accuracy is weaker than walking.** The stride-length formula is
+  a fixed walking-gait approximation; real running strides lengthen with
+  pace, which this doesn't model. Flagged as a known limitation rather than
+  adding pace-dependent stride modeling, to keep this pass to "basic
+  indoor pace mode" as scoped.
+- **No new permissions requested anywhere** — confirmed raw `Accelerometer`
+  needs neither Android's `ACTIVITY_RECOGNITION` (that's only for the
+  dedicated step-counter/detector hardware sensors, not general
+  accelerometer access) nor iOS's `NSMotionUsageDescription` (only required
+  for `Pedometer`/`CMSensorRecorder`-based APIs, which this doesn't use).
+- Pause/Resume works the same as GPS mode: pausing stops the accelerometer
+  listener, and step history from before a pause is discarded on resume so
+  it can't inflate post-resume cadence.

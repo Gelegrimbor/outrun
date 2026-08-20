@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "OUTRUN",
-    "slug": "outrun",
+    "slug": "gelegrimbor",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -9,7 +9,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.outrun.app"
+      "bundleIdentifier": "com.joshuascott.outrun"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +19,11 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.outrun.app"
+      "package": "com.joshuascott.outrun",
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -44,10 +48,18 @@
           "isAndroidBackgroundLocationEnabled": false
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "expo-sensors"
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "37a4f3a3-524a-4b34-b711-b761146e0072"
+      }
+    },
+    "owner": "gelegrimborthegreats-team"
   }
 }
