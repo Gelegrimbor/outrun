@@ -59,6 +59,12 @@ export default function LiveSessionScreen() {
   const [paused, setPaused] = useState(false);
   const [goalReached, setGoalReached] = useState(false);
   const [fps, setFps] = useState<number | null>(null);
+  const [stepDebug, setStepDebug] = useState<{
+    dynamicG: number;
+    thresholdG: number;
+    stepCount: number;
+  } | null>(null);
+  const lastStepDebugUpdateRef = useRef(0);
 
   useEffect(() => {
     if (!activityType || !goalType || goalValue === null) {
@@ -115,6 +121,17 @@ export default function LiveSessionScreen() {
       setSample(s);
       setScoreState(scoreKeeperRef.current.state);
       setHordeDistanceM(hordeStateRef.current?.hordeDistanceM ?? null);
+
+      // Dev-only tuning aid, throttled to ~5Hz -- StepPaceProvider samples
+      // at 20Hz and this is just for eyeballing the signal during a real
+      // walk, not something that needs full sample-rate updates.
+      if (__DEV__ && providerRef.current instanceof StepPaceProvider) {
+        const nowMs = Date.now();
+        if (nowMs - lastStepDebugUpdateRef.current > 200) {
+          lastStepDebugUpdateRef.current = nowMs;
+          setStepDebug(providerRef.current.getDebugInfo());
+        }
+      }
 
       // Goal progress -> finish-line banner (session keeps going; ending is
       // the player's call).
@@ -340,6 +357,12 @@ export default function LiveSessionScreen() {
         <View style={styles.hudBottom} pointerEvents="box-none">
           {__DEV__ && fps !== null && (
             <Text style={[styles.fpsText, fpsStyle(fps)]}>{Math.round(fps)} FPS</Text>
+          )}
+          {__DEV__ && stepDebug && (
+            <Text style={styles.fpsText}>
+              signal {stepDebug.dynamicG.toFixed(3)}g / threshold {stepDebug.thresholdG.toFixed(3)}
+              g · {stepDebug.stepCount} steps
+            </Text>
           )}
           <View style={styles.hudRow} pointerEvents="none">
             <View style={styles.hudCard}>

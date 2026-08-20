@@ -18,10 +18,23 @@ import type { PaceProvider, PaceSample } from './PaceProvider';
 // Fitness permission prompt; raw accelerometer needs neither.
 
 const SAMPLE_INTERVAL_MS = 50; // 20Hz -- well above step-cadence Nyquist (max ~4 steps/s)
-const LOWPASS_ALPHA = 0.3; // exponential smoothing to denoise the raw signal
+// EMA low-pass cutoff (Hz) = alpha / (2*pi*dt*(1-alpha)). At dt=0.05s, the
+// original 0.3 gave a ~1.36Hz cutoff -- *below* normal walking cadence
+// (~1.5-2.5Hz), so the filter meant to strip sensor noise was instead
+// attenuating the actual step signal before it reached the threshold check.
+// 0.5 gives ~3.18Hz, comfortably above walking (and brisk jogging) cadence
+// while still smoothing genuinely high-frequency noise.
+const LOWPASS_ALPHA = 0.5;
 const GRAVITY_G = 1.0;
-const STEP_THRESHOLD_G = 0.15; // dynamic-acceleration swing required to count as a step
-const MIN_STEP_INTERVAL_MS = 300; // refractory period -- caps cadence at 200 steps/min
+// Dynamic-acceleration swing required to count as a step. Normal walking
+// (pocket or natural arm swing) typically swings ~0.05-0.15g; the original
+// 0.15 sat at the top of that range, so it only caught the hardest steps
+// or outright shakes. Lowered to register normal gait -- if this turns out
+// too sensitive (false steps while just standing/fidgeting), the dev-only
+// signal readout on the live HUD in step mode shows the live g-value next
+// to this threshold, so it can be retuned from a real walk without guessing.
+const STEP_THRESHOLD_G = 0.05;
+const MIN_STEP_INTERVAL_MS = 300; // refractory period -- caps cadence at 200 steps/min, well above normal walking (~100-120 spm); not the bottleneck here
 const CADENCE_WINDOW_MS = 4000; // rolling window for cadence smoothing
 
 const FALLBACK_HEIGHT_CM = 170;
@@ -44,6 +57,8 @@ export class StepPaceProvider implements PaceProvider {
   private aboveThreshold = false;
   private lastStepAt: number | null = null;
   private stepTimestamps: number[] = [];
+  private latestDynamicG = 0;
+  private stepCount = 0;
 
   private totalDistanceM = 0;
   private startedAt: number | null = null;
@@ -64,6 +79,8 @@ export class StepPaceProvider implements PaceProvider {
     this.aboveThreshold = false;
     this.lastStepAt = null;
     this.stepTimestamps = [];
+    this.latestDynamicG = 0;
+    this.stepCount = 0;
     this.totalDistanceM = 0;
     this.latestSpeedMps = 0;
     this.startedAt = Date.now();
@@ -113,11 +130,25 @@ export class StepPaceProvider implements PaceProvider {
     return () => this.listeners.delete(listener);
   }
 
+  /** Dev-tuning aid: the live dynamic-acceleration signal alongside the
+   * threshold it's compared against, and steps counted so far. Lets the
+   * threshold be retuned from what a real walk actually looks like instead
+   * of guessing blind between rebuilds. Not part of the PaceProvider
+   * interface -- GPS has no equivalent concept. */
+  getDebugInfo(): { dynamicG: number; thresholdG: number; stepCount: number } {
+    return {
+      dynamicG: this.latestDynamicG,
+      thresholdG: STEP_THRESHOLD_G,
+      stepCount: this.stepCount,
+    };
+  }
+
   private handleSample(data: { x: number; y: number; z: number }): void {
     const now = Date.now();
     const magnitude = Math.sqrt(data.x ** 2 + data.y ** 2 + data.z ** 2);
     this.smoothedMagnitudeG += LOWPASS_ALPHA * (magnitude - this.smoothedMagnitudeG);
     const dynamicG = this.smoothedMagnitudeG - GRAVITY_G;
+    this.latestDynamicG = dynamicG;
 
     // Rising-edge threshold crossing, with a refractory period so one
     // physical step (one up-down cycle) can't register as several.
@@ -128,6 +159,7 @@ export class StepPaceProvider implements PaceProvider {
         this.lastStepAt = now;
         this.stepTimestamps.push(now);
         this.totalDistanceM += this.strideM;
+        this.stepCount += 1;
       }
     } else if (this.aboveThreshold && dynamicG < STEP_THRESHOLD_G * 0.5) {
       // Hysteresis: only re-arm once the signal drops well below threshold,

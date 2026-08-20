@@ -453,6 +453,39 @@ converting step cadence into speed via a standard stride-length-from-height
 formula, using your profile height (and gender, for a small factor
 adjustment) with a 170cm fallback if unset.
 
+### Retuned after the first real test (still needs your validation)
+
+The first cut only registered shake-level motion, not normal walking. Two
+compounding causes, both now fixed in `lib/pace/StepPaceProvider.ts`:
+
+- The step threshold (0.15g) sat at the top of normal walking's actual
+  swing range (~0.05-0.15g) — lowered to 0.05g.
+- The noise-filtering low-pass was itself the bigger problem: at the
+  20Hz sample rate, its cutoff (~1.36Hz) sat *below* normal walking
+  cadence (~1.5-2.5Hz), so it was quietly damping the real step signal
+  before the threshold check ever saw it. Retuned to a ~3.18Hz cutoff
+  (comfortably above walking and brisk jogging, still well below sensor
+  noise) — the file's comments show the formula if it needs adjusting again.
+- `MIN_STEP_INTERVAL_MS` (300ms, caps cadence at 200 steps/min) was checked
+  and isn't the bottleneck — normal walking is well under that ceiling.
+
+Since neither of us can validate the exact right number without a real
+walk, there's now a **dev-only live signal readout** on the HUD in step
+mode: `signal 0.0Xg / threshold 0.050g · N steps`. Watch that while walking
+normally (in-pocket, natural arm swing — not held rigid) to see how your
+actual motion compares to the threshold in real time, rather than guessing
+and rebuilding again. If it's still not sensitive enough, or now
+over-triggers from normal jostling, that readout tells you which direction
+and roughly how far to move `STEP_THRESHOLD_G`.
+
+**Faster iteration tip:** since this round of changes is JS-only (no new
+native module), you don't strictly need another *preview* build to test
+it — a **development** build (`eas build --profile development`, using the
+`expo-dev-client` you already have installed) would let you tweak
+`STEP_THRESHOLD_G` and reload over Metro in seconds instead of a full cloud
+build each time. Worth setting up if this takes more than one or two more
+tuning passes; not required if you'd rather just rebuild the preview again.
+
 ### Test it
 
 1. Dashboard → **Start Session** → pick **Walk** or **Run** (Cycle doesn't
