@@ -4,6 +4,10 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { SessionProvider, useSession } from '@/context/ctx';
 import { ProfileProvider, useProfile } from '@/context/profile';
+// Side-effect import: registers the background location task at app
+// startup. TaskManager requires tasks to be defined in module scope
+// before anything tries to start them.
+import '@/lib/session/backgroundTracking';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 

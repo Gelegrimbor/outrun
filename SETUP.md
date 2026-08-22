@@ -437,54 +437,86 @@ sources" the first time, since this isn't from the Play Store).
 ## Phase 10 (piece 1) — step counter / indoor pace mode
 
 Adds `expo-sensors` (a new native module), so **this needs a fresh EAS
-preview build** — it will not work in Expo Go or in a dev-client build made
-before this change. No new Supabase step, no new permission prompts.
+build** — it will not work in Expo Go or in any build made before this
+change. No new Supabase step.
 
-### What this is
+### What this is (v2 — switched to the platform's Pedometer)
 
 [`lib/pace/StepPaceProvider.ts`](lib/pace/StepPaceProvider.ts) implements
-the same `PaceProvider` interface as `GpsPaceProvider` — that's the point of
-the interface from Phase 4: the live screen doesn't know or care which one
-is feeding it. It estimates pace by peak-detecting steps from the raw
-accelerometer (not `expo-sensors`' `Pedometer` API — see the file's header
-comment for why: orientation-agnostic, and it avoids the iOS Motion & Fitness
-permission prompt entirely, since raw accelerometer needs none) and
-converting step cadence into speed via a standard stride-length-from-height
-formula, using your profile height (and gender, for a small factor
-adjustment) with a 170cm fallback if unset.
+the same `PaceProvider` interface as `GpsPaceProvider` — the live screen
+doesn't know or care which one is feeding it.
 
-### Retuned after the first real test (still needs your validation)
+**This is a rewrite, not a retune.** The original version hand-rolled step
+detection from the raw accelerometer (peak-detection with a tunable
+threshold). Two tuning rounds against real walks both failed — the second
+still only registered ~22m of what should have been several hundred meters
+over a 3-minute walk. Digging into why turned up a structural problem, not
+just wrong constants: the detector required the signal to fall back near
+zero between steps before it would "re-arm" for the next one, and an
+in-pocket phone's motion during continuous walking often doesn't cleanly
+return to baseline (fabric damping + continuous motion) — so it could catch
+the first step and then silently miss everything after. That's a weakness
+of the detection *approach*, not something a third threshold guess was
+likely to fix.
 
-The first cut only registered shake-level motion, not normal walking. Two
-compounding causes, both now fixed in `lib/pace/StepPaceProvider.ts`:
+**v2 uses `expo-sensors`' `Pedometer` API** — Core Motion on iOS,
+`TYPE_STEP_COUNTER` on Android — i.e. the platform's own step-counting
+algorithm, which Apple/Google have validated against far more data than
+hand-tuning here ever could. The tradeoff: `watchStepCount()` only gives a
+*cumulative* step count on both platforms (confirmed by reading both native
+implementations directly), not a per-step timestamp, so cadence is derived
+from the deltas between successive callbacks rather than a continuous
+signal — coarser than the old 20Hz accelerometer stream, but backed by a
+real algorithm instead of a hand-tuned one. Stride-length-from-height
+conversion is unchanged from before.
 
-- The step threshold (0.15g) sat at the top of normal walking's actual
-  swing range (~0.05-0.15g) — lowered to 0.05g.
-- The noise-filtering low-pass was itself the bigger problem: at the
-  20Hz sample rate, its cutoff (~1.36Hz) sat *below* normal walking
-  cadence (~1.5-2.5Hz), so it was quietly damping the real step signal
-  before the threshold check ever saw it. Retuned to a ~3.18Hz cutoff
-  (comfortably above walking and brisk jogging, still well below sensor
-  noise) — the file's comments show the formula if it needs adjusting again.
-- `MIN_STEP_INTERVAL_MS` (300ms, caps cadence at 200 steps/min) was checked
-  and isn't the bottleneck — normal walking is well under that ceiling.
+### ⚠️ Known limitation: Android step callbacks can be unreliable
 
-Since neither of us can validate the exact right number without a real
-walk, there's now a **dev-only live signal readout** on the HUD in step
-mode: `signal 0.0Xg / threshold 0.050g · N steps`. Watch that while walking
-normally (in-pocket, natural arm swing — not held rigid) to see how your
-actual motion compares to the threshold in real time, rather than guessing
-and rebuilding again. If it's still not sensitive enough, or now
-over-triggers from normal jostling, that readout tells you which direction
-and roughly how far to move `STEP_THRESHOLD_G`.
+This isn't a "might be a problem" — it's documented upstream:
+[expo#16920](https://github.com/expo/expo/issues/16920) (`watchStepCount`
+not firing at all on a Samsung A30), [expo#16605](https://github.com/expo/expo/issues/16605)
+(updates not firing correctly), and [expo#19899](https://github.com/expo/expo/issues/19899)
+(Pedometer not working at all on Android 9 or below). If step detection
+seems stalled on a specific Android device, this is the likely reason, not
+a regression in this app's code. iOS's Core Motion implementation doesn't
+have the same documented history and is expected to be more consistent.
+No workaround attempted here — flagging it as a known limitation is more
+honest than pretending a wrapper around a flaky platform API is bulletproof.
 
-**Faster iteration tip:** since this round of changes is JS-only (no new
-native module), you don't strictly need another *preview* build to test
-it — a **development** build (`eas build --profile development`, using the
-`expo-dev-client` you already have installed) would let you tweak
-`STEP_THRESHOLD_G` and reload over Metro in seconds instead of a full cloud
-build each time. Worth setting up if this takes more than one or two more
-tuning passes; not required if you'd rather just rebuild the preview again.
+### New permissions
+
+- **Android 10+**: `ACTIVITY_RECOGNITION` (added to `app.json`) — a runtime
+  prompt the first time step mode is used.
+- **iOS**: Motion & Fitness (via the `expo-sensors` config plugin's
+  `motionPermission` string, now set in `app.json`) — same prompt style as
+  any fitness app's step tracking.
+
+Both are exactly the permission pair any real pedometer app asks for — not
+a surprise to a user who picks "Indoor (steps)".
+
+### The debug readout changed shape
+
+Now shows what actually matters for telling "not walking enough" apart from
+"the platform's callback is lagging" (a real possibility per the known
+issue above, not just a tuning question):
+
+```
+N steps · X spm · last update Y.Ys ago
+```
+
+If that "last update" number climbs high while you're clearly still
+walking, that's the platform's step callback stalling — evidence for the
+known Android issue, not something to chase by changing app code.
+
+*Fixed since the first test:* the readout was rendering in default
+(near-black) text color with no background against the scene's dark
+background — legible only as a faint sliver, not a z-index/layering issue
+as it first appeared. It's now in a bordered chip with an explicit visible
+color, matching the other HUD elements.
+
+Still visible directly on the HUD in any build (not gated behind a debug flag),
+for the same reason as before: testing shouldn't depend on getting the
+right build type *and* a live DevTools connection at once.
 
 ### Test it
 
@@ -493,38 +525,212 @@ tuning passes; not required if you'd rather just rebuild the preview again.
    **Outdoor (GPS)** or **Indoor (steps)**.
 2. Pick **Indoor (steps)** → a hint appears confirming it's estimated, not
    measured → **Continue** through goal setup as normal.
-3. **Begin Session** → should start almost immediately (no permission
-   prompt — there isn't one for this).
+3. **Begin Session** → grant the Motion & Fitness / Activity Recognition
+   prompt the first time.
 4. On the live screen, an **INDOOR · ESTIMATED PACE** badge should be
-   visible near the top, distinct from the plain **GPS** badge you'd see on
-   an outdoor session.
-5. Prop the phone somewhere it can sense your stride — a treadmill console
-   tray is the reference case, but walking with it in a pocket/armband also
-   works since detection isn't tied to a fixed axis. Walk/jog in place or on
-   a treadmill; Speed/Pace/Distance should respond to your actual cadence
-   within a couple of seconds.
-6. Stand still — the speed reading should decay to 0 rather than sticking at
-   its last value.
-7. Compare against the treadmill's own readout if you have one — this is an
-   estimate, expect real disagreement (rough target: within 15-20% at a
-   steady pace), not GPS-level accuracy.
+   visible near the top, distinct from the plain **GPS** badge.
+5. Walk normally — in-pocket or natural arm swing, not held rigid. Watch
+   the debug readout: step count should climb roughly in line with your
+   actual steps, and "last update" shouldn't grow large while you're
+   actively walking.
+6. Stand still — speed should decay to 0 within a few seconds rather than
+   sticking at its last value.
+7. Compare total distance at the end against a known distance if possible
+   (a measured route, a treadmill's own readout) — this is an estimate,
+   expect real disagreement, not GPS-level accuracy.
 
 ### Notes / decisions
 
-- **Not offered for Cycle.** There's no equivalent "step" signal for
-  pedaling, and building that isn't part of this pass — that's the
-  Bluetooth sensor piece coming next in this phase, which reads real
-  trainer/bike data instead of estimating from phone motion.
+- **Not offered for Cycle.** There's no equivalent step signal for
+  pedaling — that's the Bluetooth sensor piece coming next in this phase.
 - **Running accuracy is weaker than walking.** The stride-length formula is
   a fixed walking-gait approximation; real running strides lengthen with
-  pace, which this doesn't model. Flagged as a known limitation rather than
-  adding pace-dependent stride modeling, to keep this pass to "basic
-  indoor pace mode" as scoped.
-- **No new permissions requested anywhere** — confirmed raw `Accelerometer`
-  needs neither Android's `ACTIVITY_RECOGNITION` (that's only for the
-  dedicated step-counter/detector hardware sensors, not general
-  accelerometer access) nor iOS's `NSMotionUsageDescription` (only required
-  for `Pedometer`/`CMSensorRecorder`-based APIs, which this doesn't use).
-- Pause/Resume works the same as GPS mode: pausing stops the accelerometer
-  listener, and step history from before a pause is discarded on resume so
-  it can't inflate post-resume cadence.
+  pace, which this doesn't model.
+- Pause/Resume: pausing removes the step-count subscription and banks the
+  distance covered so far; resuming re-subscribes, which both platforms'
+  native implementations reset to a fresh cumulative count from — the
+  provider adds the new segment's distance on top of what was banked,
+  rather than losing pre-pause progress.
+- **Foreground-only, same as GPS.** Confirmed directly from `expo-sensors`'
+  own source: `watchStepCount`'s doc comment states "Pedometer updates will
+  not be delivered while the app is in the background," on both platforms.
+  This isn't a gap unique to step mode — `GpsPaceProvider` already has
+  background location explicitly disabled in `app.json`
+  (`isIosBackgroundLocationEnabled`/`isAndroidBackgroundLocationEnabled:
+  false`). Both pace sources need the screen on and the app foregrounded to
+  track live. The underlying step-counting hardware itself keeps counting
+  regardless of app state though — confirmed on iOS (the native module
+  re-queries from the session's original start date on returning to
+  foreground, so a brief lock/unlock mid-session produces a catch-up jump
+  rather than losing those steps); likely true on Android too (its step
+  sensor is also cumulative-since-boot at the hardware level), though that
+  one isn't confirmed as directly from the source. Real background/
+  screen-off tracking for either pace source would need a foreground
+  service + background permissions — that's the same Play Store-prep work
+  the build spec already flags as a later phase, not something either
+  provider does today.
+  *(Update: piece 2 below builds exactly this for Android — and it turned
+  out background permissions were NOT needed, see there.)*
+
+## Phase 10 (piece 2) — background / screen-off session tracking (Android)
+
+Adds `expo-task-manager`, `expo-notifications`, and `expo-keep-awake`
+(new native modules) plus new manifest permissions, so **this needs a
+fresh native build**. No new Supabase step.
+
+### First: why your screen-locked test mostly worked already
+
+You observed 39m tracked vs 44m expected with the screen locked mid-session,
+despite Pedometer's documented "no delivery while backgrounded." Three
+stacked facts explain it:
+
+1. **Screen-locked is not backgrounded.** Locking the screen leaves OUTRUN
+   as the top app — Android's aggressive process controls (cached-app
+   freezing, background restrictions) target apps the user has *navigated
+   away from*, not the app that was foreground when the screen went off.
+   The process and JS runtime keep running, at least for a while.
+2. **Android's step counter is hardware-cumulative since boot** (documented
+   behavior, and visible in expo-sensors' own Kotlin: it reports the raw
+   cumulative sensor value minus the count captured at subscribe time).
+   The chip keeps counting regardless of app state; events batch in the
+   sensor's hardware FIFO while the CPU naps and flush when it wakes — so
+   steps taken while locked arrive as a catch-up jump rather than being
+   lost. Distance survived because it derives from that cumulative count;
+   elapsed time survived because it's wall-clock.
+3. **Walking defeats Doze.** Deep Doze requires the device to be
+   *stationary* — a phone in a moving pocket doesn't qualify, so the OS
+   never clamped down during the walk.
+
+The ~11% shortfall is consistent with FIFO batching latency (ending the
+session before a final flush drops whatever was still buffered) plus
+normal step-detection undercounting at gait start/stop. So the doc warning
+is about *callback delivery*, not *data loss* — step mode was never as
+broken in background as it implied. This meaningfully shrank what this
+piece needed to build for step mode.
+
+### What's built
+
+**Android only.** Four cooperating pieces:
+
+1. **GPS mode gets a real foreground service** via expo-location's
+   `startLocationUpdatesAsync` + `foregroundService`. Key finding from
+   reading expo-location's native source: its own comment states a
+   "user-initiated foreground service with notification ... does NOT
+   require the background location permission." This is Android's
+   documented carve-out — a foreground service with
+   `foregroundServiceType="location"`, started while the app is visible,
+   keeps location flowing on **while-in-use permission alone**. So
+   `isAndroidBackgroundLocationEnabled` **stays false** — the answer to
+   "flip the flags only if genuinely needed" is that it is NOT needed.
+   Only `isAndroidForegroundServiceEnabled: true` was added (contributes
+   the FOREGROUND_SERVICE / FOREGROUND_SERVICE_LOCATION manifest
+   permissions). The service also keeps the whole process alive, which
+   keeps JS timers, scoring, and goal detection running with the screen
+   off. Background-delivered fixes feed into the same GpsPaceProvider
+   math as foreground ones, deduped by fix timestamp so double-delivery
+   through both channels is harmless.
+2. **Step mode gets NO location service** — deliberately. It has no
+   location permission to piggyback on (asking for location in *indoor*
+   mode would be incoherent), and per the investigation above plus the
+   real-world test, the cumulative hardware counter already carries
+   screen-off step sessions via catch-up. That's the answer to "confirm
+   whether Pedometer mode needs the same treatment": it doesn't — it
+   needs a different, smaller mechanism (nothing but the notification
+   below).
+3. **Both modes get an ongoing stats notification** (`distance · avg pace
+   · horde Xm`), updated every ~10s while the process runs. This is a
+   *second* notification, separate from the service's own static one —
+   because expo-location's native module throws if
+   `startLocationUpdatesAsync` is re-called while backgrounded (verified
+   in source), re-calling it to refresh the service notification's text
+   is a dead end. In step mode (no service), updates can lag while the
+   CPU naps between sensor batches, then catch up. On Android 13+ the
+   first session start asks for notification permission; denying is
+   non-fatal (tracking still works, the shade just stays empty).
+4. **Both modes, both platforms: the screen no longer sleeps during a
+   session** (`expo-keep-awake`). This alone covers the original
+   treadmill-console vision — phone propped up, HUD visible, untouched.
+
+### Design decisions to be aware of (deliberate, revisitable)
+
+- **The chase pauses while you're not looking.** The horde sim steps in
+  the render loop, which pauses when the screen is off or the app is
+  backgrounded. Tracking (distance/time/score/goal) continues; the horde
+  holds position until you look again. Rationale: chasing a player on
+  degraded sensor cadence would produce unfair catches, and a jump-scare
+  CAUGHT on unlock is exactly the "punishment" the spec says this game
+  isn't. The notification's horde distance is therefore last-known, not
+  live. Technically exploitable ("lock your screen near a gate") — it's
+  cardio, not a competitive-integrity problem.
+- **Checkpoints crossed while locked** are detected on the first frame
+  after unlock (the detector catches up through all passed gates), so
+  their `reached_at` timestamps cluster at unlock time rather than the
+  true crossing moment. Cosmetic inaccuracy in the checkpoints table.
+- **Pause drops the service and notification entirely** — a paused
+  session holds no foreground service, matching "tracking is genuinely
+  stopped." Resume restarts both (the app is necessarily foregrounded at
+  that moment, which is exactly when Android allows a location-type
+  service to start).
+- **Swiping the app away kills the service** (`killServiceOnDestroy`) and
+  the un-persisted session with it — same as before this change; no
+  zombie tracking, no orphaned notification.
+
+### iOS: explicitly out of scope this pass
+
+Everything above is `Platform.OS === 'android'`-gated; iOS behavior is
+unchanged (foreground-only GPS; step catch-up via Core Motion's re-query
+on foregrounding; keep-awake does work there). iOS background GPS has a
+viable path (`UIBackgroundModes: location`, which also works with
+while-in-use permission for sessions started in the foreground) but it's
+a different mechanism with different App Review implications and its own
+testing pass. Follow-up piece, flagged, not started — not silently
+half-implemented.
+
+### Play Store notes for Phase 9 (so this isn't a surprise later)
+
+- **Foreground service declaration:** targeting Android 14+, Play Console
+  requires declaring each foreground service type used and its
+  user-visible purpose. Ours: `location` — "live pace/distance tracking
+  during a user-initiated workout session, shown via persistent
+  notification." Expect to provide a short demo video of the notification
+  appearing when a session starts.
+- **NOT background location:** because ACCESS_BACKGROUND_LOCATION is not
+  in the manifest, the much heavier "background location access" Play
+  policy review (mandatory video + prominent-disclosure requirements)
+  does **not** apply. Keep it that way unless a real feature demands it.
+- **Data safety form:** Location → collected, precise, app functionality;
+  session distance/pace summaries are stored (Supabase) but raw location
+  traces are not persisted. Physical activity (ACTIVITY_RECOGNITION /
+  step data) → collected, app functionality. Notification permission
+  needs no declaration.
+- **Privacy policy** must mention: foreground location use during
+  sessions including screen-off continuation via foreground service,
+  step/motion data for indoor pace estimation, and that sensor data is
+  processed on-device with only workout summaries uploaded.
+
+### What needs YOUR device verification vs. what's confident
+
+Confident from implementation + source reading: the permission model (no
+background-location flag needed — that's expo-location's own source
+comment, not an inference), the fix-dedupe math, pause/resume service
+lifecycle, notification-permission degradation, iOS untouched.
+
+Needs real-device testing (cannot be verified from here):
+
+1. **GPS mode, screen off:** outdoor GPS session, lock the screen several
+   minutes mid-walk, unlock — distance should have accrued continuously
+   (not as a catch-up jump), both notifications present while locked, the
+   stats one updating every ~10s.
+2. **GPS mode, backgrounded:** same but switch to another app instead of
+   locking — the state your earlier lock test did NOT cover; truly
+   backgrounded apps are where processes get frozen without a service.
+3. **Step mode, screen off:** repeat the 39m/44m walk — expect
+   same-or-better catch-up, now with the stats notification visible
+   (possibly lagging between sensor batches).
+4. **Pause interaction:** pause → lock → unlock → resume — no distance
+   during the pause; service/notification vanish on pause, return on
+   resume.
+5. **Battery sanity:** a 30+ min GPS session with screen off shouldn't
+   show alarming battery attribution to OUTRUN.
+6. **Swipe-away mid-session:** notification and service should die with
+   the app; no orphaned notification.

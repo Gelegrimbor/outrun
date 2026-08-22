@@ -12,9 +12,14 @@ import { planCheckpoints } from '@/lib/game/checkpoints';
 import { HordeSimulation, HORDE_TUNING, type HordeState } from '@/lib/game/hordeLogic';
 import { ScoreKeeper, MAX_HEARTS, type ScoreState } from '@/lib/game/scoring';
 import { estimateCalories } from '@/lib/game/calories';
+import { useKeepAwake } from 'expo-keep-awake';
 import { formatDistance, formatDuration, formatPaceMinPerKm, formatSpeedKmh } from '@/lib/format';
 import { GpsPaceProvider } from '@/lib/pace/GpsPaceProvider';
 import { StepPaceProvider } from '@/lib/pace/StepPaceProvider';
+import {
+  startSessionBackgroundSupport,
+  stopSessionBackgroundSupport,
+} from '@/lib/session/backgroundTracking';
 import type { PaceProvider, PaceSample } from '@/lib/pace/PaceProvider';
 import { colors, radii, spacing } from '@/constants/theme';
 
@@ -29,6 +34,11 @@ type Status = 'requesting' | 'denied' | 'tracking' | 'error';
 export default function LiveSessionScreen() {
   const { activityType, goalType, goalValue, paceSource, setResult } = useSessionStore();
   const { profile } = useProfile();
+
+  // The treadmill-console case: screen stays on while a session is up, so
+  // the HUD/chase stay visible without touching the phone. Manual lock
+  // still works -- Android background support below covers that.
+  useKeepAwake();
 
   // Picked once at mount from the setup flow's choice -- both implement the
   // same PaceProvider interface, so nothing downstream (scoring, checkpoints,
@@ -60,9 +70,9 @@ export default function LiveSessionScreen() {
   const [goalReached, setGoalReached] = useState(false);
   const [fps, setFps] = useState<number | null>(null);
   const [stepDebug, setStepDebug] = useState<{
-    dynamicG: number;
-    thresholdG: number;
-    stepCount: number;
+    totalSteps: number;
+    cadenceStepsPerMin: number;
+    msSinceLastCallback: number | null;
   } | null>(null);
   const lastStepDebugUpdateRef = useRef(0);
 
@@ -88,6 +98,19 @@ export default function LiveSessionScreen() {
     );
   };
 
+  // One line for the Android ongoing notification: real tracked numbers
+  // plus the horde's last-known distance (the chase itself freezes with
+  // the render loop while the screen is off -- see SETUP.md).
+  const getNotificationStatsLine = () => {
+    const s = lastSampleRef.current;
+    if (!s) return 'Session starting…';
+    const avgSpeed = s.elapsedS > 0 ? s.totalDistanceM / s.elapsedS : 0;
+    const horde = hordeStateRef.current;
+    const parts = [formatDistance(s.totalDistanceM), formatPaceMinPerKm(avgSpeed)];
+    if (horde) parts.push(`horde ${Math.round(horde.hordeDistanceM)}m`);
+    return parts.join(' · ');
+  };
+
   const beginTracking = async () => {
     setStatus('requesting');
     setErrorMessage(null);
@@ -95,6 +118,13 @@ export default function LiveSessionScreen() {
       await providerRef.current.start();
       startedAtRef.current = new Date();
       setStatus('tracking');
+      // Android: foreground service (GPS mode) + ongoing stats
+      // notification (both modes). No-op on iOS. Failure here downgrades
+      // to foreground-only tracking rather than breaking the session.
+      startSessionBackgroundSupport({
+        mode: paceSource === 'step' ? 'step' : 'gps',
+        getStatsLine: getNotificationStatsLine,
+      }).catch((err) => console.warn('Background session support failed:', err));
     } catch (err) {
       setStatus(err instanceof Error && err.message.includes('permission') ? 'denied' : 'error');
       setErrorMessage(
@@ -122,10 +152,15 @@ export default function LiveSessionScreen() {
       setScoreState(scoreKeeperRef.current.state);
       setHordeDistanceM(hordeStateRef.current?.hordeDistanceM ?? null);
 
-      // Dev-only tuning aid, throttled to ~5Hz -- StepPaceProvider samples
+      // Step-mode tuning aid, throttled to ~5Hz -- StepPaceProvider samples
       // at 20Hz and this is just for eyeballing the signal during a real
-      // walk, not something that needs full sample-rate updates.
-      if (__DEV__ && providerRef.current instanceof StepPaceProvider) {
+      // walk. Deliberately NOT gated on __DEV__: it needs to be visible in
+      // whatever build is actually being tested with (preview or
+      // development), not depend on getting the right build type *and* a
+      // live DevTools connection at the same time. Revisit once step
+      // detection is trustworthy and this stops being an active debugging
+      // tool.
+      if (providerRef.current instanceof StepPaceProvider) {
         const nowMs = Date.now();
         if (nowMs - lastStepDebugUpdateRef.current > 200) {
           lastStepDebugUpdateRef.current = nowMs;
@@ -147,6 +182,7 @@ export default function LiveSessionScreen() {
     return () => {
       unsubscribe();
       provider.stop();
+      stopSessionBackgroundSupport();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -174,6 +210,9 @@ export default function LiveSessionScreen() {
   const handlePause = () => {
     pausedRef.current = true;
     providerRef.current.pause();
+    // A paused session shouldn't hold a foreground service or an ongoing
+    // notification -- tracking is genuinely stopped.
+    stopSessionBackgroundSupport();
     setPaused(true);
   };
 
@@ -181,10 +220,18 @@ export default function LiveSessionScreen() {
     await providerRef.current.resume();
     pausedRef.current = false;
     setPaused(false);
+    // Safe to restart here: resuming requires a tap, so the app is
+    // foregrounded -- which is exactly when Android allows a
+    // location-type foreground service to start.
+    startSessionBackgroundSupport({
+      mode: paceSource === 'step' ? 'step' : 'gps',
+      getStatsLine: getNotificationStatsLine,
+    }).catch((err) => console.warn('Background session support failed:', err));
   };
 
   const handleEndSession = () => {
     providerRef.current.stop();
+    stopSessionBackgroundSupport();
     const s = lastSampleRef.current;
     const distanceM = s?.totalDistanceM ?? 0;
     const durationS = s?.elapsedS ?? 0;
@@ -230,8 +277,9 @@ export default function LiveSessionScreen() {
         {status === 'denied' && (
           <Card>
             <Text style={styles.statusText}>
-              OUTRUN needs location access to track pace and distance. Grant it in your
-              device settings, or try again below.
+              {paceSource === 'step'
+                ? 'OUTRUN needs Motion & Fitness access to estimate pace from your steps. Grant it in your device settings, or try again below.'
+                : 'OUTRUN needs location access to track pace and distance. Grant it in your device settings, or try again below.'}
             </Text>
             <Button title="Try Again" onPress={beginTracking} />
           </Card>
@@ -358,11 +406,15 @@ export default function LiveSessionScreen() {
           {__DEV__ && fps !== null && (
             <Text style={[styles.fpsText, fpsStyle(fps)]}>{Math.round(fps)} FPS</Text>
           )}
-          {__DEV__ && stepDebug && (
-            <Text style={styles.fpsText}>
-              signal {stepDebug.dynamicG.toFixed(3)}g / threshold {stepDebug.thresholdG.toFixed(3)}
-              g · {stepDebug.stepCount} steps
-            </Text>
+          {stepDebug && (
+            <View style={styles.stepDebugChip}>
+              <Text style={styles.stepDebugText}>
+                {stepDebug.totalSteps} steps · {Math.round(stepDebug.cadenceStepsPerMin)} spm ·{' '}
+                {stepDebug.msSinceLastCallback === null
+                  ? 'waiting for first step…'
+                  : `last update ${(stepDebug.msSinceLastCallback / 1000).toFixed(1)}s ago`}
+              </Text>
+            </View>
           )}
           <View style={styles.hudRow} pointerEvents="none">
             <View style={styles.hudCard}>
@@ -609,6 +661,21 @@ const styles = StyleSheet.create({
   },
   fpsBad: {
     color: colors.danger,
+  },
+  stepDebugChip: {
+    alignSelf: 'flex-end',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+  },
+  stepDebugText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   pauseOverlay: {
     position: 'absolute',

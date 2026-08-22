@@ -1,4 +1,5 @@
 import * as Location from 'expo-location';
+import { setBackgroundLocationConsumer } from '@/lib/session/backgroundTracking';
 import type { PaceProvider, PaceSample } from './PaceProvider';
 
 const SMOOTHING_WINDOW_MS = 3000;
@@ -33,6 +34,11 @@ export class GpsPaceProvider implements PaceProvider {
   private pausedAt: number | null = null;
   private latestAccuracyM: number | null = null;
   private latestSpeedMps = 0;
+  // While the Android foreground service is running, the same fused fixes
+  // can arrive through BOTH the foreground watch callback and the
+  // background task. Deduping on fix timestamp makes double-delivery
+  // harmless (and drops out-of-order stragglers).
+  private lastFixTimestamp = 0;
 
   async start(): Promise<void> {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -45,6 +51,7 @@ export class GpsPaceProvider implements PaceProvider {
     this.latestSpeedMps = 0;
     this.startedAt = Date.now();
     this.pausedAt = null;
+    this.lastFixTimestamp = 0;
 
     await this.watch();
   }
@@ -58,12 +65,20 @@ export class GpsPaceProvider implements PaceProvider {
       },
       (location) => this.handleLocation(location)
     );
+    // Fixes delivered via the Android background task (screen off /
+    // backgrounded) route into the same math as the foreground watch.
+    setBackgroundLocationConsumer((locations) => {
+      for (const location of locations) {
+        this.handleLocation(location);
+      }
+    });
   }
 
   pause(): void {
     if (this.pausedAt !== null) return;
     this.subscription?.remove();
     this.subscription = null;
+    setBackgroundLocationConsumer(null);
     this.pausedAt = Date.now();
     this.latestSpeedMps = 0;
   }
@@ -84,6 +99,7 @@ export class GpsPaceProvider implements PaceProvider {
   stop(): void {
     this.subscription?.remove();
     this.subscription = null;
+    setBackgroundLocationConsumer(null);
     this.listeners.clear();
   }
 
@@ -97,6 +113,11 @@ export class GpsPaceProvider implements PaceProvider {
   }
 
   private handleLocation(location: Location.LocationObject) {
+    // Skip duplicates (watch + background task can deliver the same fix)
+    // and out-of-order stragglers.
+    if (location.timestamp <= this.lastFixTimestamp) return;
+    this.lastFixTimestamp = location.timestamp;
+
     const fix: Fix = {
       latitude: location.coords.latitude,
       longitude: location.coords.longitude,
