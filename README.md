@@ -16,6 +16,8 @@ A fitness app that turns your walk, run or ride into a zombie chase. Your real-w
 - **Unlockables:** characters and skins unlocked by stats such as sessions completed, streak, distance and score.
 - **Android background tracking:** foreground-service GPS so a session continues with the screen off, plus keep-awake.
 
+> **Privacy:** your display name is shown to other logged-in users on the leaderboard, so pick a nickname, not your real name.
+
 ## Tech stack
 
 - Expo SDK 57, React Native 0.86, React 19, TypeScript
