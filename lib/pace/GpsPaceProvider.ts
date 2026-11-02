@@ -4,6 +4,20 @@ import type { PaceProvider, PaceSample } from './PaceProvider';
 
 const SMOOTHING_WINDOW_MS = 3000;
 
+// Fix-quality gates. Without these, indoor/urban-canyon GPS multipath makes
+// the position scatter tens of meters between fixes, and summing Haversine
+// over that scatter fabricates distance out of thin air (observed: 229m
+// "walked" in 57s around an apartment). Every real fitness tracker gates
+// its fix stream like this.
+/** Fixes with worse horizontal accuracy than this are not trusted for
+ * distance -- typical outdoor fixes are ±5-15m; indoor multipath is much
+ * worse. */
+const MAX_ACCEPTABLE_ACCURACY_M = 30;
+/** A fix implying faster-than-plausible movement since the last accepted
+ * fix is a teleport (multipath jump), not motion. ~54 km/h leaves room for
+ * fast downhill cycling; indoor scatter implies hundreds of km/h. */
+const MAX_PLAUSIBLE_SPEED_MPS = 15;
+
 interface Fix {
   latitude: number;
   longitude: number;
@@ -125,10 +139,31 @@ export class GpsPaceProvider implements PaceProvider {
     };
     this.latestAccuracyM = location.coords.accuracy ?? null;
 
-    if (this.fixes.length > 0) {
-      this.totalDistanceM += haversineMeters(this.fixes[this.fixes.length - 1], fix);
+    // Quality gates: a rejected fix contributes nothing to distance or the
+    // speed window, but we still prune the window, recompute speed, and
+    // emit a sample below -- so the HUD keeps ticking (speed decaying to 0,
+    // the ± accuracy readout showing why) instead of freezing while GPS is
+    // bad. The last accepted fix stays as the anchor, so once good fixes
+    // return, genuine movement across the bad stretch still counts (the
+    // long time gap keeps the implied speed plausible).
+    const lastAccepted = this.fixes.length > 0 ? this.fixes[this.fixes.length - 1] : null;
+    let accept = true;
+    if (this.latestAccuracyM !== null && this.latestAccuracyM > MAX_ACCEPTABLE_ACCURACY_M) {
+      accept = false;
+    } else if (lastAccepted) {
+      const segmentM = haversineMeters(lastAccepted, fix);
+      const segmentS = (fix.timestamp - lastAccepted.timestamp) / 1000;
+      if (segmentS > 0 && segmentM / segmentS > MAX_PLAUSIBLE_SPEED_MPS) {
+        accept = false;
+      }
     }
-    this.fixes.push(fix);
+
+    if (accept) {
+      if (lastAccepted) {
+        this.totalDistanceM += haversineMeters(lastAccepted, fix);
+      }
+      this.fixes.push(fix);
+    }
 
     const cutoff = fix.timestamp - SMOOTHING_WINDOW_MS;
     while (this.fixes.length > 1 && this.fixes[0].timestamp < cutoff) {

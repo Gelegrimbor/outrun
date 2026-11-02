@@ -734,3 +734,38 @@ Needs real-device testing (cannot be verified from here):
    show alarming battery attribution to OUTRUN.
 6. **Swipe-away mid-session:** notification and service should die with
    the app; no orphaned notification.
+
+### Findings from the first real background test
+
+Backgrounded GPS (app actively switched away): **worked** — 171m/2:03 at a
+plausible pace, notifications correct. Two observations investigated:
+
+**1. The brief mid-test stall: explained, expected, no data lost.** Read
+expo-location's background delivery path: while the app is backgrounded,
+collected fixes are delivered to JS via Android's **JobScheduler**
+(`taskManagerUtils.scheduleJob` in the task consumer), and JobScheduler
+batches job execution on its own OS-controlled timetable — irregular
+multi-second delivery latency is normal, especially while another app has
+focus. Fixes aren't dropped, they arrive late in a batch; the distance
+math then counts the whole gap segment at once (and the plausibility gate
+below allows it, since a long time gap keeps the implied speed normal). So
+a momentary freeze in the numbers followed by a catch-up is this
+mechanism, not a tracking gap. Nothing to fix — it's how background
+delivery is designed to work.
+
+**2. The 229m-in-57s "walk": real bug, now fixed — but it wasn't the
+locked path.** That test was *indoors* (around the apartment). Indoor GPS
+suffers multipath — the position estimate scatters tens of meters between
+fixes — and the distance accumulator summed every scatter jump as real
+movement: ~4 m/s of phantom "running." Nothing about locking caused it;
+the locked test just happened to be the indoor one (your outdoor
+backgrounded test was plausible for exactly this reason). Fix, in
+`GpsPaceProvider`, the two gates every real fitness tracker applies:
+fixes with accuracy worse than ±30m contribute nothing, and any fix
+implying >15 m/s (~54 km/h) since the last accepted fix is discarded as a
+teleport. Rejected fixes still emit HUD samples (speed decays to 0, the ±
+accuracy readout shows why), and the last good fix stays as the anchor so
+genuine movement across a bad stretch still counts once fixes recover.
+**Retest expectation:** the same indoor walk should now register very
+little distance (which is *correct* — indoors is what Indoor (steps) mode
+is for), and outdoor tracking should be unchanged.
