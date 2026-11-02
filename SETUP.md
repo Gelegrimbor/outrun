@@ -365,10 +365,15 @@ score in one session, 100+ zombies outrun total.
 - **Leaderboard security model**, worth understanding if you touch the SQL:
   the `sessions` table's RLS only lets each user see their own rows, which
   is correct for session history but can't produce a leaderboard. The
-  `leaderboard` view deliberately runs with the view owner's privileges
-  (not `security_invoker`) so it can aggregate across everyone — but it
-  only exposes display name + best score + session count, nothing
-  sensitive, and only to `authenticated` users.
+  leaderboard is therefore served by `public.get_leaderboard()`, a
+  `SECURITY DEFINER` function
+  ([`004_leaderboard_function.sql`](supabase/sql/004_leaderboard_function.sql),
+  which drops and replaces the original `leaderboard` view from 003). It
+  runs with `search_path = ''` and fully qualified names, returns at most
+  100 rows, and exposes only display name, best score, session count and
+  an `is_me` flag (no user ids). `EXECUTE` is revoked from `public` and `anon` and granted only to
+  `authenticated`. The app calls it via `supabase.rpc('get_leaderboard')`.
+  **Run 004 after 003.**
 - **Unlocks are evaluated and written client-side**, same trust model as
   the rest of the game's stats in this build (score, distance, etc. are
   all client-computed with no server-side validation). A determined user

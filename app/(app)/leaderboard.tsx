@@ -4,14 +4,12 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Screen } from '@/components/ui/Screen';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { useSession } from '@/context/ctx';
 import { fetchGlobalLeaderboard, type LeaderboardEntry } from '@/lib/leaderboard';
 import { colors, radii, spacing } from '@/constants/theme';
 
 type Tab = 'global' | 'friends';
 
 export default function LeaderboardScreen() {
-  const { user } = useSession();
   const [tab, setTab] = useState<Tab>('global');
   const [entries, setEntries] = useState<LeaderboardEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,8 +61,8 @@ export default function LeaderboardScreen() {
           )}
           {entries?.map((entry, index) => (
             <View
-              key={entry.user_id}
-              style={[styles.row, entry.user_id === user?.id && styles.rowSelf]}
+              key={index}
+              style={[styles.row, entry.is_me && styles.rowSelf]}
             >
               <Text style={styles.rank}>{index + 1}</Text>
               <View style={styles.rowMain}>

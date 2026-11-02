@@ -36,7 +36,7 @@ npm install
 ### 2. Set up Supabase
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. In the SQL Editor, run the files in `supabase/sql/` in order (`001_profiles.sql`, `002_sessions.sql`, `003_leaderboard_and_unlockables.sql`).
+2. In the SQL Editor, run the files in `supabase/sql/` in order (`001_profiles.sql`, `002_sessions.sql`, `003_leaderboard_and_unlockables.sql`, `004_leaderboard_function.sql`).
 3. For Google sign-in, follow the steps in [SETUP.md](SETUP.md).
 
 ### 3. Environment variables
